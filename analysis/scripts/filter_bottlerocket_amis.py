@@ -9,6 +9,9 @@ Busca AMIs oficiais do Bottlerocket publicadas pela AWS, filtrando por:
 - versão do Kubernetes
 - regiões específicas ou todas as regiões
 
+Também pode buscar o changelog/release notes no GitHub para as versões
+Bottlerocket encontradas.
+
 Exemplos:
 
   python3 analysis/scripts/filter_bottlerocket_amis.py \
@@ -23,15 +26,23 @@ Exemplos:
     --bottlerocket-version 1.58.0 \
     --output-format json \
     --output-file analysis/data/bottlerocket-1.58.0.json
+
+  python3 analysis/scripts/filter_bottlerocket_amis.py \
+    --bottlerocket-version 1.58.0 \
+    --changelog
 """
 
 import argparse
 import csv
 import json
+import os
 import re
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
+
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -79,6 +90,19 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--changelog",
+        "-c",
+        action="store_true",
+        help="Busca o changelog no GitHub para as versões Bottlerocket encontradas.",
+    )
+
+    parser.add_argument(
+        "--github-token",
+        default=os.environ.get("GITHUB_TOKEN", ""),
+        help="Token GitHub opcional. Também pode ser informado via variável GITHUB_TOKEN.",
+    )
+
+    parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
@@ -105,6 +129,10 @@ def prompt_if_no_args(args: argparse.Namespace) -> argparse.Namespace:
         args.bottlerocket_version = input("Versão do Bottlerocket: ").strip()
         args.k8s_version = input("Versão do Kubernetes: ").strip()
         args.regions = input("Regiões: ").strip()
+
+        changelog_input = input("Buscar changelog no GitHub? (s/N): ").strip()
+        if changelog_input.lower() == "s":
+            args.changelog = True
 
     return args
 
@@ -167,7 +195,7 @@ def extract_variant(name: str) -> str:
 def version_sort_key(version: str) -> List[int]:
     result = []
 
-    for part in version.split("."):
+    for part in str(version).split("."):
         try:
             result.append(int(part))
         except ValueError:
@@ -335,6 +363,107 @@ def write_or_print(content: str, output_file: str) -> None:
         print(content, end="")
 
 
+def get_unique_bottlerocket_versions(rows: List[Dict[str, Any]]) -> List[str]:
+    versions = {
+        str(row.get("Bottlerocket_Version", "")).strip()
+        for row in rows
+        if str(row.get("Bottlerocket_Version", "")).strip()
+    }
+
+    return sorted(
+        versions,
+        key=version_sort_key,
+    )
+
+
+def fetch_github_release_changelog(
+    version: str,
+    github_token: str = "",
+) -> str:
+    url = (
+        "https://api.github.com/repos/"
+        f"bottlerocket-os/bottlerocket/releases/tags/v{version}"
+    )
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "bottlerocket-ami-analysis",
+    }
+
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    request = urllib.request.Request(
+        url,
+        headers=headers,
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+    except urllib.error.HTTPError as exc:
+        return (
+            f"AVISO: Não foi possível obter o changelog para v{version}. "
+            f"HTTP {exc.code}."
+        )
+
+    except urllib.error.URLError as exc:
+        return (
+            f"AVISO: Não foi possível obter o changelog para v{version}. "
+            f"Erro: {exc.reason}"
+        )
+
+    except json.JSONDecodeError:
+        return (
+            f"AVISO: Não foi possível obter o changelog para v{version}. "
+            "Resposta inválida da API do GitHub."
+        )
+
+    body = payload.get("body") or ""
+
+    if not body.strip():
+        return (
+            f"AVISO: Não foi possível obter o changelog para v{version}. "
+            "Release sem body ou versão não encontrada."
+        )
+
+    return body.strip()
+
+
+def print_changelogs(
+    rows: List[Dict[str, Any]],
+    github_token: str = "",
+) -> None:
+    versions = get_unique_bottlerocket_versions(rows)
+
+    if not versions:
+        print(
+            "\nAVISO: Nenhuma versão Bottlerocket encontrada para buscar changelog.",
+            file=sys.stderr,
+        )
+        return
+
+    print()
+    print("=" * 60)
+    print("Changelog no GitHub do Bottlerocket")
+    print("=" * 60)
+
+    for version in versions:
+        print()
+        print(f"CHANGELOG PARA BOTTLEROCKET v{version}:")
+        print("-" * 60)
+
+        changelog = fetch_github_release_changelog(
+            version=version,
+            github_token=github_token,
+        )
+
+        print(changelog)
+        print("-" * 60)
+
+
 def print_summary(
     rows: List[Dict[str, Any]],
     regions: List[str],
@@ -411,6 +540,12 @@ def main() -> int:
     )
 
     write_or_print(output, args.output_file)
+
+    if all_results and args.changelog:
+        print_changelogs(
+            rows=all_results,
+            github_token=args.github_token,
+        )
 
     print_summary(
         rows=all_results,
