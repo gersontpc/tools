@@ -128,7 +128,7 @@ Esse fluxo cria uma janela de risco para usuários que confiam no console da AWS
 
 - Release oficial Bottlerocket `v1.58.0`: <https://github.com/bottlerocket-os/bottlerocket/releases/tag/v1.58.0>
 - Commit de documentação `1.58.x` no site: <https://github.com/bottlerocket-os/bottlerocket-project-website/commit/3cdac2f2ad88c89a74a1ca6f112ddf614dc157e8>
-- Script de coleta de AMIs: [`analysis/scripts/filter_bottlerocket_amis.sh`](analysis/scripts/filter_bottlerocket_amis.sh)
+- Script de coleta de AMIs: [`analysis/scripts/filter_bottlerocket_amis.py`](analysis/scripts/filter_bottlerocket_amis.sh)
 - Resultado da coleta: [`analysis/data/data.txt`](analysis/data/data.txt)
 - Prints de evidência: [`analysis/img/`](analysis/img/)
 - Documentação AWS para localizar AMIs: <https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami.html>
